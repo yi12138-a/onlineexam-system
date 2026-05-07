@@ -1,0 +1,15 @@
+/target/*
+!/target/online-exam-system-1.0.0.jar
+
+*.log
+*.pid
+
+data/*.db
+data/*.trace.db
+
+.env
+*.local
+
+.idea/
+.vscode/
+*.iml

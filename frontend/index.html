@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>在线考试系统</title>
+    <link rel="stylesheet" href="./app.css?v=20260507-login-bg">
+</head>
+<body>
+<div id="app"></div>
+<script>
+    window.EXAM_API_BASE = window.EXAM_API_BASE
+        || (location.hostname === "localhost" || location.hostname === "127.0.0.1"
+            ? "http://localhost:8080/api"
+            : "/api");
+</script>
+<script src="./app.js?v=20260507-login-bg"></script>
+</body>
+</html>
