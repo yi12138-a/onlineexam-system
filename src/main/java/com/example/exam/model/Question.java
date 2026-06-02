@@ -12,15 +12,23 @@ public class Question {
     @Column(nullable = false)
     private QuestionType type;
 
-    @Column(nullable = false, length = 1000)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String title;
+
+    @Column(columnDefinition = "TEXT")
+    private String groupTitle;
+
+    private Integer groupOrder;
+
+    @Column(length = 3000)
+    private String imageUrls;
 
     private String optionA;
     private String optionB;
     private String optionC;
     private String optionD;
 
-    @Column(length = 1000)
+    @Column(columnDefinition = "TEXT")
     private String correctAnswer;
 
     private int score;
@@ -33,8 +41,17 @@ public class Question {
 
     public Question(QuestionType type, String title, String optionA, String optionB, String optionC,
                     String optionD, String correctAnswer, int score, UserAccount creator) {
+        this(type, title, null, null, null, optionA, optionB, optionC, optionD, correctAnswer, score, creator);
+    }
+
+    public Question(QuestionType type, String title, String groupTitle, Integer groupOrder, String imageUrls,
+                    String optionA, String optionB, String optionC, String optionD, String correctAnswer,
+                    int score, UserAccount creator) {
         this.type = type;
         this.title = title;
+        this.groupTitle = groupTitle;
+        this.groupOrder = groupOrder;
+        this.imageUrls = imageUrls;
         this.optionA = optionA;
         this.optionB = optionB;
         this.optionC = optionC;
@@ -66,6 +83,30 @@ public class Question {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public String getGroupTitle() {
+        return groupTitle;
+    }
+
+    public void setGroupTitle(String groupTitle) {
+        this.groupTitle = groupTitle;
+    }
+
+    public Integer getGroupOrder() {
+        return groupOrder;
+    }
+
+    public void setGroupOrder(Integer groupOrder) {
+        this.groupOrder = groupOrder;
+    }
+
+    public String getImageUrls() {
+        return imageUrls;
+    }
+
+    public void setImageUrls(String imageUrls) {
+        this.imageUrls = imageUrls;
     }
 
     public String getOptionA() {

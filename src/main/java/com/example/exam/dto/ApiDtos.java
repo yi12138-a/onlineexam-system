@@ -31,12 +31,24 @@ public final class ApiDtos {
 
     public record QuestionDto(Long id, QuestionType type, String typeLabel, String title, String optionA,
                               String optionB, String optionC, String optionD, String correctAnswer,
-                              int score, Long creatorId) {
+                              int score, Long creatorId, String groupTitle, Integer groupOrder,
+                              List<String> imageUrls) {
         public static QuestionDto from(Question question, boolean includeAnswer) {
             return new QuestionDto(question.getId(), question.getType(), question.getType().getLabel(),
                     question.getTitle(), question.getOptionA(), question.getOptionB(), question.getOptionC(),
                     question.getOptionD(), includeAnswer ? question.getCorrectAnswer() : null,
-                    question.getScore(), question.getCreator().getId());
+                    question.getScore(), question.getCreator().getId(), question.getGroupTitle(),
+                    question.getGroupOrder(), imageUrls(question.getImageUrls()));
+        }
+
+        private static List<String> imageUrls(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return List.of();
+            }
+            return Arrays.stream(raw.split("\\R"))
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty())
+                    .toList();
         }
     }
 
@@ -147,7 +159,8 @@ public final class ApiDtos {
     public record ResetPasswordRequest(String newPassword) {
     }
 
-    public record CreateQuestionRequest(QuestionType type, String title, String optionA, String optionB,
+    public record CreateQuestionRequest(QuestionType type, String title, String groupTitle, Integer groupOrder,
+                                        List<String> imageUrls, String optionA, String optionB,
                                         String optionC, String optionD, String correctAnswer, int score) {
     }
 
@@ -155,6 +168,12 @@ public final class ApiDtos {
     }
 
     public record ImportQuestionsResponse(int imported) {
+    }
+
+    public record BatchDeleteQuestionsRequest(List<Long> ids) {
+    }
+
+    public record BatchDeleteQuestionsResponse(int deleted) {
     }
 
     public record CreateExamRequest(String title, String description, int durationMinutes, List<Long> questionIds) {

@@ -100,6 +100,190 @@ function questionOptions(question) {
     return options.map(([key, text]) => `<p>${key}. ${escapeHtml(text)}</p>`).join("");
 }
 
+function questionMedia(question) {
+    const urls = question.imageUrls || [];
+    if (!urls.length) {
+        return "";
+    }
+    return `<div class="question-media">${urls.map(url => `
+        <img src="${escapeHtml(url)}" alt="题目配图">
+    `).join("")}</div>`;
+}
+
+function questionStem(question, includeGroup = true) {
+    if (question.groupTitle && includeGroup) {
+        return `
+            <p class="question-title">${escapeHtml(question.groupTitle)}</p>
+            ${questionMedia(question)}
+            <p class="sub-question-title">${escapeHtml(question.title)}</p>
+        `;
+    }
+    if (question.groupTitle) {
+        return `<p class="sub-question-title">${escapeHtml(question.title)}</p>`;
+    }
+    return `<p class="question-title">${escapeHtml(question.title)}</p>${questionMedia(question)}`;
+}
+
+function buildQuestionItems(questions) {
+    const items = [];
+    const groups = new Map();
+    questions.forEach(question => {
+        if (!question.groupTitle) {
+            items.push({
+                kind: "single",
+                key: `question:${question.id}`,
+                ids: [question.id],
+                questions: [question],
+                title: question.title,
+                typeLabel: question.typeLabel,
+                score: question.score
+            });
+            return;
+        }
+        const key = `group:${question.groupTitle}`;
+        if (!groups.has(key)) {
+            const item = {
+                kind: "group",
+                key,
+                ids: [],
+                questions: [],
+                title: question.groupTitle,
+                typeLabel: "题组",
+                score: 0
+            };
+            groups.set(key, item);
+            items.push(item);
+        }
+        const item = groups.get(key);
+        item.questions.push(question);
+        item.ids.push(question.id);
+        item.score += question.score;
+    });
+    items.forEach(item => {
+        item.questions.sort((left, right) => {
+            const leftOrder = left.groupOrder ?? left.id;
+            const rightOrder = right.groupOrder ?? right.id;
+            return leftOrder - rightOrder;
+        });
+        item.ids = item.questions.map(question => question.id);
+    });
+    return items;
+}
+
+function questionItemSearchText(item) {
+    return item.questions.map(question => [
+        question.groupTitle,
+        question.title,
+        question.optionA,
+        question.optionB,
+        question.optionC,
+        question.optionD,
+        question.correctAnswer,
+        question.typeLabel
+    ].filter(Boolean).join(" ")).join(" ");
+}
+
+function groupQuestionMedia(item) {
+    const urls = [];
+    item.questions.forEach(question => {
+        (question.imageUrls || []).forEach(url => {
+            if (!urls.includes(url)) {
+                urls.push(url);
+            }
+        });
+    });
+    return questionMedia({imageUrls: urls});
+}
+
+function questionItemContent(item, includeAnswers = true) {
+    if (item.kind === "single") {
+        const question = item.questions[0];
+        return `
+            ${questionStem(question)}
+            ${questionOptions(question)}
+        `;
+    }
+    return `
+        <p class="question-title">${escapeHtml(item.title)}</p>
+        ${groupQuestionMedia(item)}
+        <div class="question-subitems">
+            ${item.questions.map(question => `
+                <div class="question-subitem">
+                    <strong>${escapeHtml(question.title)}</strong>
+                    ${questionOptions(question)}
+                    ${includeAnswers ? `<p class="muted">答案：${escapeHtml(question.correctAnswer)}</p>` : ""}
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
+function questionItemAnswers(item) {
+    return item.questions.map(question => {
+        const label = item.kind === "group" ? question.title.replace(item.title, "").trim() || `第 ${question.groupOrder ?? question.id} 小题` : "";
+        return `${label ? `${escapeHtml(label)}：` : ""}${escapeHtml(question.correctAnswer)}`;
+    }).join("<br>");
+}
+
+function questionTypeLabel(type) {
+    return meta.questionTypes.find(option => option.value === type)?.label || type || "";
+}
+
+function questionItemType(item) {
+    const types = [...new Set(item.questions.map(question => question.type).filter(Boolean))];
+    return types.length === 1 ? types[0] : "MIXED";
+}
+
+function questionItemTypeLabel(item) {
+    const type = questionItemType(item);
+    return type === "MIXED" ? "混合题组" : questionTypeLabel(type);
+}
+
+function questionTypeFilterOptions(selected = "") {
+    return [
+        `<option value="" ${selected ? "" : "selected"}>全部题型</option>`,
+        ...meta.questionTypes.map(option => `
+            <option value="${escapeHtml(option.value)}" ${option.value === selected ? "selected" : ""}>
+                ${escapeHtml(option.label)}
+            </option>
+        `),
+        `<option value="MIXED" ${selected === "MIXED" ? "selected" : ""}>混合题组</option>`
+    ].join("");
+}
+
+function groupQuestionItemsByType(items) {
+    const sections = [];
+    const byType = new Map();
+    const orderedTypes = [...meta.questionTypes.map(option => option.value), "MIXED"];
+
+    orderedTypes.forEach(type => byType.set(type, []));
+    items.forEach(item => {
+        const type = questionItemType(item);
+        if (!byType.has(type)) {
+            byType.set(type, []);
+        }
+        byType.get(type).push(item);
+    });
+    orderedTypes.forEach(type => {
+        const list = byType.get(type) || [];
+        if (list.length) {
+            sections.push({
+                type,
+                label: type === "MIXED" ? "混合题组" : questionTypeLabel(type),
+                items: list
+            });
+        }
+    });
+    return sections;
+}
+
+function parseQuestionIds(value) {
+    return String(value || "")
+        .split(",")
+        .map(id => Number(id))
+        .filter(id => Number.isFinite(id) && id > 0);
+}
+
 async function init() {
     meta = await api("/meta");
     try {
@@ -385,7 +569,7 @@ async function renderTakeExam(id) {
                 <span>剩余时间</span>
                 <strong id="countdown">--:--</strong>
             </div>
-            ${exam.questions.map((question, index) => renderQuestionInput(question, index)).join("")}
+            ${renderExamQuestions(exam.questions)}
             <div class="actions" style="justify-content:space-between">
                 <button type="button" data-go="#/student">返回</button>
                 <button id="submitButton" class="primary" type="submit">提交试卷</button>
@@ -418,11 +602,19 @@ async function renderTakeExam(id) {
     });
 }
 
-function renderQuestionInput(question, index) {
+function renderExamQuestions(questions) {
+    return buildQuestionItems(questions).map((item, index) => {
+        if (item.kind === "group") {
+            return renderQuestionGroupInput(item, index);
+        }
+        return renderQuestionInput(item.questions[0], index);
+    }).join("");
+}
+
+function questionAnswerControl(question) {
     const name = `question_${question.id}`;
-    let input = "";
     if (question.type === "SINGLE_CHOICE") {
-        input = [["A", question.optionA], ["B", question.optionB], ["C", question.optionC], ["D", question.optionD]]
+        return [["A", question.optionA], ["B", question.optionB], ["C", question.optionC], ["D", question.optionD]]
             .filter(([, text]) => text)
             .map(([key, text], optionIndex) => `
                 <label class="option">
@@ -430,24 +622,52 @@ function renderQuestionInput(question, index) {
                     <span>${key}. ${escapeHtml(text)}</span>
                 </label>
             `).join("");
-    } else if (question.type === "TRUE_FALSE") {
-        input = `
+    }
+    if (question.type === "TRUE_FALSE") {
+        return `
             <label class="option"><input type="radio" name="${name}" value="正确" required><span>正确</span></label>
             <label class="option"><input type="radio" name="${name}" value="错误"><span>错误</span></label>
         `;
-    } else if (question.type === "FILL_BLANK") {
-        input = `<input name="${name}" placeholder="请输入答案" required>`;
-    } else {
-        input = `<textarea name="${name}" placeholder="请输入完整作答" required></textarea>`;
     }
+    if (question.type === "FILL_BLANK") {
+        return `<input name="${name}" placeholder="请输入答案" required>`;
+    }
+    return `<textarea name="${name}" placeholder="请输入完整作答" required></textarea>`;
+}
+
+function renderQuestionInput(question, index, includeGroup = true) {
     return `
         <article class="question-block">
             <div class="actions" style="justify-content:space-between;margin-bottom:18px">
                 <h3>第 ${index + 1} 题 · ${escapeHtml(question.typeLabel)}</h3>
                 <span class="badge">${question.score} 分</span>
             </div>
-            <p class="question-title">${escapeHtml(question.title)}</p>
-            ${input}
+            ${questionStem(question, includeGroup)}
+            ${questionAnswerControl(question)}
+        </article>
+    `;
+}
+
+function renderQuestionGroupInput(item, index) {
+    return `
+        <article class="question-block">
+            <div class="actions" style="justify-content:space-between;margin-bottom:18px">
+                <h3>第 ${index + 1} 题 · 题组</h3>
+                <span class="badge">${item.score} 分</span>
+            </div>
+            <p class="question-title">${escapeHtml(item.title)}</p>
+            ${groupQuestionMedia(item)}
+            <div class="question-subitems">
+                ${item.questions.map(question => `
+                    <div class="question-subitem">
+                        <div class="actions" style="justify-content:space-between;margin-bottom:10px">
+                            <h4>${escapeHtml(question.title)}</h4>
+                            <span class="badge">${question.score} 分</span>
+                        </div>
+                        ${questionAnswerControl(question)}
+                    </div>
+                `).join("")}
+            </div>
         </article>
     `;
 }
@@ -490,7 +710,7 @@ async function renderResult(id) {
                     <h3>第 ${index + 1} 题 · ${escapeHtml(answer.question.typeLabel)}</h3>
                     <span class="badge">${answer.score ?? "待评分"} / ${answer.question.score}</span>
                 </div>
-                <p class="question-title">${escapeHtml(answer.question.title)}</p>
+                ${questionStem(answer.question)}
                 <p>你的答案：<strong>${escapeHtml(answer.answerText)}</strong></p>
                 ${answer.question.correctAnswer ? `<p>标准答案：<strong>${escapeHtml(answer.question.correctAnswer)}</strong></p>` : ""}
                 ${answer.teacherComment ? `<p>教师评语：<strong>${escapeHtml(answer.teacherComment)}</strong></p>` : ""}
@@ -536,6 +756,8 @@ async function renderTeacher(route) {
 
 async function renderTeacherQuestions(message = "") {
     const questions = await api("/teacher/questions");
+    const questionItems = buildQuestionItems(questions);
+    const questionSections = groupQuestionItemsByType(questionItems);
     document.getElementById("view").innerHTML = `
         <section class="page-head">
             <div><h1>题库中心</h1><p>支持选择题、判断题、填空题和大题上传，也可以按格式批量导入。</p></div>
@@ -582,16 +804,30 @@ async function renderTeacherQuestions(message = "") {
             </section>
         </div>
         <section class="section">
+            <div class="actions question-bulkbar">
+                <input id="questionFilter" placeholder="按题干关键词筛选">
+                <select id="questionTypeFilter" class="question-filter-select">${questionTypeFilterOptions()}</select>
+                <button type="button" id="selectVisibleQuestions">选中当前筛选</button>
+                <button type="button" id="clearQuestionSelection">清空选择</button>
+                <button class="accent" type="button" id="deleteSelectedQuestions">删除选中</button>
+                <span class="badge" id="selectedQuestionCount">已选 0 题</span>
+            </div>
             <div class="table-wrap"><table class="table">
-                <thead><tr><th>题型</th><th>题干</th><th>答案</th><th>分值</th><th>操作</th></tr></thead>
+                <thead><tr><th><input id="checkAllQuestions" type="checkbox" aria-label="全选题目"></th><th>题型</th><th>题干</th><th>答案</th><th>分值</th><th>操作</th></tr></thead>
                 <tbody>
-                    ${questions.map(question => `<tr>
-                        <td><span class="badge">${escapeHtml(question.typeLabel)}</span></td>
-                        <td><strong>${escapeHtml(question.title)}</strong>${questionOptions(question)}</td>
-                        <td>${escapeHtml(question.correctAnswer)}</td>
-                        <td>${question.score}</td>
-                        <td><button data-delete-question="${question.id}">删除</button></td>
-                    </tr>`).join("") || tableEmpty(5, "题库暂无题目。")}
+                    ${questionSections.map(section => `
+                        <tr class="question-category-row" data-question-category="${escapeHtml(section.type)}">
+                            <td colspan="6">${escapeHtml(section.label)} <span>${section.items.length} 项</span></td>
+                        </tr>
+                        ${section.items.map(item => `<tr data-question-row data-type="${escapeHtml(questionItemType(item))}" data-search="${escapeHtml(questionItemSearchText(item))}">
+                        <td><input class="question-check" type="checkbox" value="${item.ids.join(",")}" aria-label="选择题目"></td>
+                        <td><span class="badge">${escapeHtml(questionItemTypeLabel(item))}</span></td>
+                        <td>${questionItemContent(item, false)}</td>
+                        <td>${questionItemAnswers(item)}</td>
+                        <td>${item.score}</td>
+                        <td><button data-delete-question-ids="${item.ids.join(",")}">删除</button></td>
+                    </tr>`).join("")}
+                    `).join("") || tableEmpty(6, "题库暂无题目。")}
                 </tbody>
             </table></div>
         </section>
@@ -601,15 +837,21 @@ async function renderTeacherQuestions(message = "") {
     document.getElementById("importForm").addEventListener("submit", importQuestions);
     document.getElementById("fileImportForm").addEventListener("submit", importQuestionsFromFile);
     document.getElementById("downloadTemplateButton").addEventListener("click", downloadQuestionTemplate);
-    document.querySelectorAll("[data-delete-question]").forEach(button => {
+    document.querySelectorAll("[data-delete-question-ids]").forEach(button => {
         button.addEventListener("click", async () => {
-            if (!confirm("确认删除这道题目？")) {
+            const ids = parseQuestionIds(button.dataset.deleteQuestionIds);
+            const message = ids.length > 1 ? `确认删除这组题目？共 ${ids.length} 道小题。` : "确认删除这道题目？";
+            if (!confirm(message)) {
                 return;
             }
-            await api(`/teacher/questions/${button.dataset.deleteQuestion}`, {method: "DELETE"});
-            renderTeacherQuestions("题目已删除");
+            await api("/teacher/questions", {
+                method: "DELETE",
+                body: JSON.stringify({ids})
+            });
+            renderTeacherQuestions(ids.length > 1 ? `已删除 ${ids.length} 道小题` : "题目已删除");
         });
     });
+    bindQuestionBulkActions();
 }
 
 async function submitQuestion(event) {
@@ -622,6 +864,83 @@ async function submitQuestion(event) {
     } catch (error) {
         renderTeacherQuestions(error.message);
     }
+}
+
+function bindQuestionBulkActions() {
+    const rows = Array.from(document.querySelectorAll("[data-question-row]"));
+    const checks = Array.from(document.querySelectorAll(".question-check"));
+    const count = document.getElementById("selectedQuestionCount");
+    const checkAll = document.getElementById("checkAllQuestions");
+    const filter = document.getElementById("questionFilter");
+    const typeFilter = document.getElementById("questionTypeFilter");
+    const categoryRows = Array.from(document.querySelectorAll("[data-question-category]"));
+
+    const visibleRows = () => rows.filter(row => row.style.display !== "none");
+    const updateCategoryRows = () => {
+        categoryRows.forEach(categoryRow => {
+            const visibleInCategory = rows.some(row =>
+                row.dataset.type === categoryRow.dataset.questionCategory && row.style.display !== "none");
+            categoryRow.style.display = visibleInCategory ? "" : "none";
+        });
+    };
+    const applyFilters = () => {
+        const keyword = filter.value.trim().toLowerCase();
+        const selectedType = typeFilter.value;
+        rows.forEach(row => {
+            const matchesKeyword = !keyword || row.dataset.search.toLowerCase().includes(keyword);
+            const matchesType = !selectedType || row.dataset.type === selectedType;
+            row.style.display = matchesKeyword && matchesType ? "" : "none";
+            if (row.style.display === "none") {
+                row.querySelector(".question-check").checked = false;
+            }
+        });
+        updateCategoryRows();
+        updateCount();
+    };
+    const updateCount = () => {
+        const selectedChecks = checks.filter(check => check.checked);
+        const selectedQuestions = selectedChecks.reduce((total, check) => total + parseQuestionIds(check.value).length, 0);
+        count.textContent = `已选 ${selectedChecks.length} 项，共 ${selectedQuestions} 道小题`;
+        const visibleChecks = visibleRows().map(row => row.querySelector(".question-check"));
+        checkAll.checked = visibleChecks.length > 0 && visibleChecks.every(check => check.checked);
+        checkAll.indeterminate = visibleChecks.some(check => check.checked) && !checkAll.checked;
+    };
+
+    checks.forEach(check => check.addEventListener("change", updateCount));
+    checkAll.addEventListener("change", () => {
+        visibleRows().forEach(row => row.querySelector(".question-check").checked = checkAll.checked);
+        updateCount();
+    });
+    filter.addEventListener("input", applyFilters);
+    typeFilter.addEventListener("change", applyFilters);
+    document.getElementById("selectVisibleQuestions").addEventListener("click", () => {
+        visibleRows().forEach(row => row.querySelector(".question-check").checked = true);
+        updateCount();
+    });
+    document.getElementById("clearQuestionSelection").addEventListener("click", () => {
+        checks.forEach(check => check.checked = false);
+        updateCount();
+    });
+    document.getElementById("deleteSelectedQuestions").addEventListener("click", async () => {
+        const ids = checks.filter(check => check.checked).flatMap(check => parseQuestionIds(check.value));
+        if (!ids.length) {
+            alert("请先选择要删除的题目");
+            return;
+        }
+        if (!confirm(`确认删除选中的 ${ids.length} 道题目？已被试卷使用的题目不能删除。`)) {
+            return;
+        }
+        try {
+            const result = await api("/teacher/questions", {
+                method: "DELETE",
+                body: JSON.stringify({ids})
+            });
+            renderTeacherQuestions(`已删除 ${result.deleted} 道题目`);
+        } catch (error) {
+            renderTeacherQuestions(error.message);
+        }
+    });
+    updateCount();
 }
 
 async function importQuestions(event) {
@@ -658,11 +977,12 @@ async function importQuestionsFromFile(event) {
 
 function downloadQuestionTemplate() {
     const content = [
-        "题型|题干|A|B|C|D|答案|分值",
-        "选择题|JVM 的作用是什么？|运行 Java 字节码|管理数据库|编写页面|发送邮件|A|10",
-        "判断题|HTTP 是无状态协议。|||||正确|10",
-        "填空题|Spring Boot 默认内嵌容器是 ____。|||||Tomcat|10",
-        "大题|说明如何防止重复提交。|||||人工评分|20"
+        "题型|题干|A|B|C|D|答案|分值|题组题干|题组序号|图片路径",
+        "选择题|JVM 的作用是什么？|运行 Java 字节码|管理数据库|编写页面|发送邮件|A|10|||",
+        "选择题|第 1 空|运行 Java 字节码|管理数据库|编写页面|发送邮件|A|10|共用题干内容|1|./assets/question-bank/example.png",
+        "判断题|HTTP 是无状态协议。|||||正确|10|||",
+        "填空题|Spring Boot 默认内嵌容器是 ____。|||||Tomcat|10|||",
+        "大题|说明如何防止重复提交。|||||人工评分|20|||"
     ].join("\\n");
     const blob = new Blob([content], {type: "text/plain;charset=utf-8"});
     const url = URL.createObjectURL(blob);
@@ -718,6 +1038,8 @@ function examTable(exams, compact) {
 
 async function renderNewExam() {
     const questions = await api("/teacher/questions");
+    const questionItems = buildQuestionItems(questions);
+    const questionSections = groupQuestionItemsByType(questionItems);
     document.getElementById("view").innerHTML = `
         <section class="page-head">
             <div><h1>新建考试</h1><p>从题库中选择题目组成试卷，创建后可发布给学生。</p></div>
@@ -733,15 +1055,25 @@ async function renderNewExam() {
             </section>
             <section class="section">
                 <h2>选择题目</h2>
+                <div class="actions question-bulkbar">
+                    <input id="examQuestionFilter" placeholder="按题干关键词筛选">
+                    <select id="examQuestionTypeFilter" class="question-filter-select">${questionTypeFilterOptions()}</select>
+                    <span class="badge" id="examSelectedQuestionCount">已选 0 项，共 0 分</span>
+                </div>
                 <div class="table-wrap"><table class="table">
                     <thead><tr><th>选择</th><th>题型</th><th>题干</th><th>分值</th></tr></thead>
                     <tbody>
-                        ${questions.map(question => `<tr>
-                            <td><label class="pick"><input type="checkbox" name="questionIds" value="${question.id}"></label></td>
-                            <td><span class="badge">${escapeHtml(question.typeLabel)}</span></td>
-                            <td>${escapeHtml(question.title)}</td>
-                            <td>${question.score}</td>
-                        </tr>`).join("") || tableEmpty(4, "题库为空，请先上传题目。")}
+                        ${questionSections.map(section => `
+                            <tr class="question-category-row" data-exam-question-category="${escapeHtml(section.type)}">
+                                <td colspan="4">${escapeHtml(section.label)} <span>${section.items.length} 项</span></td>
+                            </tr>
+                            ${section.items.map(item => `<tr data-exam-question-row data-type="${escapeHtml(questionItemType(item))}" data-search="${escapeHtml(questionItemSearchText(item))}" data-score="${item.score}">
+                            <td><label class="pick"><input type="checkbox" data-exam-question-ids="${item.ids.join(",")}"></label></td>
+                            <td><span class="badge">${escapeHtml(questionItemTypeLabel(item))}</span></td>
+                            <td>${questionItemContent(item, false)}</td>
+                            <td>${item.score}</td>
+                        </tr>`).join("")}
+                        `).join("") || tableEmpty(4, "题库为空，请先上传题目。")}
                     </tbody>
                 </table></div>
             </section>
@@ -752,6 +1084,7 @@ async function renderNewExam() {
         </form>
     `;
     bindGoButtons();
+    bindExamQuestionFilters();
     document.getElementById("examCreateForm").addEventListener("submit", async event => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
@@ -759,11 +1092,53 @@ async function renderNewExam() {
             title: form.get("title"),
             description: form.get("description"),
             durationMinutes: Number(form.get("durationMinutes")),
-            questionIds: form.getAll("questionIds").map(Number)
+            questionIds: Array.from(document.querySelectorAll("[data-exam-question-ids]:checked"))
+                .flatMap(check => parseQuestionIds(check.dataset.examQuestionIds))
         };
         await api("/teacher/exams", {method: "POST", body: JSON.stringify(payload)});
         setHash("#/teacher/exams");
     });
+}
+
+function bindExamQuestionFilters() {
+    const rows = Array.from(document.querySelectorAll("[data-exam-question-row]"));
+    const categoryRows = Array.from(document.querySelectorAll("[data-exam-question-category]"));
+    const filter = document.getElementById("examQuestionFilter");
+    const typeFilter = document.getElementById("examQuestionTypeFilter");
+    const count = document.getElementById("examSelectedQuestionCount");
+
+    if (!filter || !typeFilter || !count) {
+        return;
+    }
+
+    const updateCategoryRows = () => {
+        categoryRows.forEach(categoryRow => {
+            const visibleInCategory = rows.some(row =>
+                row.dataset.type === categoryRow.dataset.examQuestionCategory && row.style.display !== "none");
+            categoryRow.style.display = visibleInCategory ? "" : "none";
+        });
+    };
+    const updateCount = () => {
+        const checkedRows = rows.filter(row => row.querySelector("[data-exam-question-ids]").checked);
+        const selectedScore = checkedRows.reduce((total, row) => total + Number(row.dataset.score || 0), 0);
+        count.textContent = `已选 ${checkedRows.length} 项，共 ${selectedScore} 分`;
+    };
+    const applyFilters = () => {
+        const keyword = filter.value.trim().toLowerCase();
+        const selectedType = typeFilter.value;
+        rows.forEach(row => {
+            const matchesKeyword = !keyword || row.dataset.search.toLowerCase().includes(keyword);
+            const matchesType = !selectedType || row.dataset.type === selectedType;
+            row.style.display = matchesKeyword && matchesType ? "" : "none";
+        });
+        updateCategoryRows();
+        updateCount();
+    };
+
+    rows.forEach(row => row.querySelector("[data-exam-question-ids]").addEventListener("change", updateCount));
+    filter.addEventListener("input", applyFilters);
+    typeFilter.addEventListener("change", applyFilters);
+    updateCount();
 }
 
 async function renderTeacherSubmissions(examId) {
@@ -808,13 +1183,17 @@ async function renderGrade(id) {
                         <h3>第 ${index + 1} 题 · ${escapeHtml(answer.question.typeLabel)}</h3>
                         <span class="badge">${answer.question.score} 分</span>
                     </div>
-                    <p class="question-title">${escapeHtml(answer.question.title)}</p>
+                    ${questionStem(answer.question)}
                     <p>学生答案</p>
                     <div class="panel" style="margin:10px 0 18px;padding:18px">${escapeHtml(answer.answerText)}</div>
                     ${answer.question.type !== "ESSAY" ? `
                         <p>标准答案：<strong>${escapeHtml(answer.question.correctAnswer)}</strong></p>
                         <p>系统判分：<strong>${answer.score ?? 0}</strong></p>
                     ` : `
+                        <div class="reference-answer">
+                            <strong>参考答案</strong>
+                            <p>${escapeHtml(answer.question.correctAnswer || "暂无参考答案，请按题目要求人工评分。")}</p>
+                        </div>
                         <div class="grid two">
                             <div class="field">
                                 <label class="label">教师评分</label>
@@ -894,6 +1273,7 @@ async function renderAdmin() {
                             <button data-user-enabled="${user.id}" data-enabled="${!user.enabled}">${user.enabled ? "停用" : "启用"}</button>
                             <input data-password="${user.id}" type="password" minlength="6" placeholder="新密码">
                             <button data-reset="${user.id}">重置</button>
+                            <button class="danger" data-delete-user="${user.id}" data-username="${escapeHtml(user.username)}">删除</button>
                         </div></td>
                     </tr>`).join("")}
                 </tbody>
@@ -940,6 +1320,19 @@ async function renderAdmin() {
                 body: JSON.stringify({newPassword: input.value})
             });
             renderAdmin();
+        });
+    });
+    document.querySelectorAll("[data-delete-user]").forEach(button => {
+        button.addEventListener("click", async () => {
+            if (!confirm(`确认删除账号 ${button.dataset.username}？删除后不能恢复。`)) {
+                return;
+            }
+            try {
+                await api(`/admin/users/${button.dataset.deleteUser}`, {method: "DELETE"});
+                renderAdmin();
+            } catch (error) {
+                alert(error.message);
+            }
         });
     });
 }

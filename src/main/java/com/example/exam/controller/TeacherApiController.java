@@ -5,6 +5,8 @@ import com.example.exam.dto.ApiDtos.CreateQuestionRequest;
 import com.example.exam.dto.ApiDtos.ExamDetailDto;
 import com.example.exam.dto.ApiDtos.ExamSummaryDto;
 import com.example.exam.dto.ApiDtos.GradeSubmissionRequest;
+import com.example.exam.dto.ApiDtos.BatchDeleteQuestionsRequest;
+import com.example.exam.dto.ApiDtos.BatchDeleteQuestionsResponse;
 import com.example.exam.dto.ApiDtos.ImportQuestionsRequest;
 import com.example.exam.dto.ApiDtos.ImportQuestionsResponse;
 import com.example.exam.dto.ApiDtos.QuestionDto;
@@ -24,6 +26,7 @@ import com.example.exam.repository.QuestionRepository;
 import com.example.exam.service.AuthService;
 import com.example.exam.service.ExamService;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -80,6 +83,7 @@ public class TeacherApiController {
         UserAccount teacher = authService.requireRole(session, Role.TEACHER);
         validateQuestion(request.type(), request.title(), request.correctAnswer());
         Question question = questionRepository.save(new Question(request.type(), clean(request.title()),
+                emptyToNull(request.groupTitle()), request.groupOrder(), joinImageUrls(request.imageUrls()),
                 emptyToNull(request.optionA()), emptyToNull(request.optionB()), emptyToNull(request.optionC()),
                 emptyToNull(request.optionD()), clean(request.correctAnswer()), Math.max(request.score(), 1),
                 teacher));
@@ -90,7 +94,8 @@ public class TeacherApiController {
     public ImportQuestionsResponse importQuestions(@RequestBody ImportQuestionsRequest request, HttpSession session) {
         UserAccount teacher = authService.requireRole(session, Role.TEACHER);
         int imported = 0;
-        for (String line : clean(request.payload()).split("\\R")) {
+        String payload = request.payload() == null ? "" : request.payload().trim();
+        for (String line : payload.split("\\R")) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) {
                 continue;
@@ -105,7 +110,11 @@ public class TeacherApiController {
             try {
                 QuestionType type = parseType(cells[0]);
                 validateQuestion(type, cells[1], cells[6]);
-                questionRepository.save(new Question(type, clean(cells[1]), emptyToNull(cells[2]),
+                String groupTitle = cells.length > 8 ? emptyToNull(cells[8]) : null;
+                Integer groupOrder = cells.length > 9 ? parseNullableInt(cells[9]) : null;
+                String imageUrls = cells.length > 10 ? parseImageUrls(cells[10]) : null;
+                questionRepository.save(new Question(type, clean(cells[1]), groupTitle, groupOrder, imageUrls,
+                        emptyToNull(cells[2]),
                         emptyToNull(cells[3]), emptyToNull(cells[4]), emptyToNull(cells[5]),
                         clean(cells[6]), parseInt(cells[7], 5), teacher));
                 imported++;
@@ -119,6 +128,27 @@ public class TeacherApiController {
     @DeleteMapping("/questions/{id}")
     public void deleteQuestion(@PathVariable Long id, HttpSession session) {
         UserAccount teacher = authService.requireRole(session, Role.TEACHER);
+        deleteOwnedQuestion(id, teacher);
+    }
+
+    @DeleteMapping("/questions")
+    @Transactional
+    public BatchDeleteQuestionsResponse deleteQuestions(@RequestBody BatchDeleteQuestionsRequest request,
+                                                        HttpSession session) {
+        UserAccount teacher = authService.requireRole(session, Role.TEACHER);
+        List<Long> ids = request.ids() == null ? List.of() : request.ids();
+        if (ids.isEmpty()) {
+            throw new IllegalStateException("请先选择要删除的题目");
+        }
+        int deleted = 0;
+        for (Long id : ids.stream().distinct().toList()) {
+            deleteOwnedQuestion(id, teacher);
+            deleted++;
+        }
+        return new BatchDeleteQuestionsResponse(deleted);
+    }
+
+    private void deleteOwnedQuestion(Long id, UserAccount teacher) {
         Question question = questionRepository.findById(id).orElseThrow();
         if (!question.getCreator().getId().equals(teacher.getId())) {
             throw new IllegalStateException("只能删除自己创建的题目");
@@ -231,7 +261,7 @@ public class TeacherApiController {
             case "选择题", "选择", "SINGLE_CHOICE" -> QuestionType.SINGLE_CHOICE;
             case "判断题", "判断", "TRUE_FALSE" -> QuestionType.TRUE_FALSE;
             case "填空题", "填空", "FILL_BLANK" -> QuestionType.FILL_BLANK;
-            case "大题", "问答题", "ESSAY" -> QuestionType.ESSAY;
+            case "大题", "问答题", "简答题", "案例题", "案例分析题", "主观题", "论文题", "ESSAY" -> QuestionType.ESSAY;
             default -> QuestionType.SINGLE_CHOICE;
         };
     }
@@ -286,8 +316,40 @@ public class TeacherApiController {
         }
     }
 
+    private Integer parseNullableInt(String value) {
+        String cleaned = clean(value);
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(cleaned);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private String joinImageUrls(List<String> imageUrls) {
+        if (imageUrls == null || imageUrls.isEmpty()) {
+            return null;
+        }
+        String joined = imageUrls.stream()
+                .map(this::clean)
+                .filter(value -> !value.isEmpty())
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+        return joined.isEmpty() ? null : joined;
+    }
+
+    private String parseImageUrls(String value) {
+        String cleaned = clean(value);
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        return cleaned.replace(";", "\n");
+    }
+
     private String clean(String value) {
-        return value == null ? "" : value.trim();
+        return value == null ? "" : value.replace("\\n", "\n").trim();
     }
 
     private String stripBom(String value) {

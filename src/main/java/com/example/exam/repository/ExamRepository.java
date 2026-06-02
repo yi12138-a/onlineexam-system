@@ -13,4 +13,6 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
     List<Exam> findByStatusOrderByCreatedAtDesc(ExamStatus status);
 
     long countByStatus(ExamStatus status);
+
+    boolean existsByTeacher(UserAccount teacher);
 }

@@ -12,15 +12,20 @@ import com.example.exam.model.SubmissionStatus;
 import com.example.exam.model.UserAccount;
 import com.example.exam.repository.ExamRepository;
 import com.example.exam.repository.ExamSubmissionRepository;
+import com.example.exam.repository.QuestionRepository;
 import com.example.exam.repository.UserAccountRepository;
 import com.example.exam.service.AuthService;
 import jakarta.servlet.http.HttpSession;
+import jakarta.transaction.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -30,13 +35,16 @@ public class AdminApiController {
     private final UserAccountRepository userRepository;
     private final ExamRepository examRepository;
     private final ExamSubmissionRepository submissionRepository;
+    private final QuestionRepository questionRepository;
 
     public AdminApiController(AuthService authService, UserAccountRepository userRepository,
-                              ExamRepository examRepository, ExamSubmissionRepository submissionRepository) {
+                              ExamRepository examRepository, ExamSubmissionRepository submissionRepository,
+                              QuestionRepository questionRepository) {
         this.authService = authService;
         this.userRepository = userRepository;
         this.examRepository = examRepository;
         this.submissionRepository = submissionRepository;
+        this.questionRepository = questionRepository;
     }
 
     @GetMapping("/overview")
@@ -82,6 +90,25 @@ public class AdminApiController {
         UserAccount user = userRepository.findById(id).orElseThrow();
         user.setPassword(authService.encodePassword(request.newPassword()));
         return UserDto.from(userRepository.save(user));
+    }
+
+    @DeleteMapping("/users/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteUser(@PathVariable Long id, HttpSession session) {
+        UserAccount admin = authService.requireRole(session, Role.ADMIN);
+        UserAccount user = userRepository.findById(id).orElseThrow();
+        if (user.getId().equals(admin.getId())) {
+            throw new IllegalStateException("不能删除当前登录的管理员账号");
+        }
+        if (user.getRole() == Role.TEACHER
+                && (examRepository.existsByTeacher(user) || questionRepository.existsByCreator(user))) {
+            throw new IllegalStateException("该教师已有试卷或题库数据，请先停用账号或清理关联数据后再删除");
+        }
+        if (user.getRole() == Role.STUDENT) {
+            submissionRepository.deleteAll(submissionRepository.findByStudentOrderBySubmittedAtDesc(user));
+        }
+        userRepository.delete(user);
     }
 
     private String clean(String value) {
